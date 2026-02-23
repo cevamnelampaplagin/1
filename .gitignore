@@ -6,6 +6,14 @@
 .pnp.js
 
 # testing
+*/*.json
+*/*.js
+*/*.DS_Store
+*/*.csv
+*/*.txt
+*.json
+test.txt
+*.js
 /coverage
 
 # next.js
