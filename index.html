@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Мій Speedtest Meter</title>
+  
+  <!-- canvas-gauges для красивого метра -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-gauges@2.1.7/dist/gauge.min.js"></script>
+  
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #0a0a1f;
+      color: #fff;
+      text-align: center;
+      padding: 30px;
+      margin: 0;
+    }
+    h1 { color: #00ff9d; margin-bottom: 10px; }
+    canvas { margin: 30px auto; display: block; }
+    #status { font-size: 1.5em; margin: 20px; color: #00ff9d; }
+    .results { font-size: 1.4em; line-height: 1.8; }
+  </style>
+</head>
+<body>
+  <h1>Мій Speedtest Meter</h1>
+  <div id="status">Запуск тесту...</div>
+  
+  <!-- Speedometer для Download -->
+  <canvas id="downloadGauge" width="340" height="340"></canvas>
+  
+  <div class="results" id="results">Чекаємо результати...</div>
+
+  <script type="module">
+    import SpeedTest from 'https://esm.run/@cloudflare/speedtest';
+
+    let downloadGauge;
+
+    function createGauge() {
+      downloadGauge = new RadialGauge({
+        renderTo: 'downloadGauge',
+        width: 340,
+        height: 340,
+        units: "Mbps",
+        minValue: 0,
+        maxValue: 1200,
+        majorTicks: ["0","200","400","600","800","1000","1200"],
+        minorTicks: 10,
+        strokeTicks: true,
+        highlights: [
+          {from: 0, to: 100, color: "#ff4444"},
+          {from: 100, to: 400, color: "#ffaa00"},
+          {from: 400, to: 1200, color: "#00ff88"}
+        ],
+        colorPlate: "#1a1a2e",
+        colorMajorTicks: "#ffffff",
+        colorMinorTicks: "#aaaaaa",
+        colorNumbers: "#ffffff",
+        colorNeedle: "#00ffff",
+        colorNeedleEnd: "#00ccff",
+        valueBox: true,
+        animationDuration: 800,
+        animationRule: "bounce"
+      }).draw();
+    }
+
+    async function startTest() {
+      createGauge();   // створюємо метер
+
+      const statusEl = document.getElementById('status');
+      const resultsEl = document.getElementById('results');
+
+      statusEl.textContent = "Тестуємо...";
+
+      const test = new SpeedTest({ autoStart: true });
+
+      // Оновлення в реальному часі
+      test.onResultsChange = ({ type }) => {
+        const summary = test.results.getSummary ? test.results.getSummary() : test.results;
+
+        if (type === 'download' || summary.downloadBandwidth !== undefined) {
+          const mbps = (test.results.getDownloadBandwidth ? 
+                        test.results.getDownloadBandwidth() : summary.downloadBandwidth || 0) / 1_000_000;
+          if (downloadGauge) downloadGauge.value = Math.min(Math.round(mbps), 1200);
+        }
+      };
+
+      // Фінальні результати
+      test.onFinish = (results) => {
+        const s = results.getSummary();
+        resultsEl.innerHTML = `
+          <strong>↓ Download:</strong> ${(s.downloadBandwidth / 1_000_000).toFixed(1)} Mbps<br>
+          <strong>↑ Upload:</strong> ${(s.uploadBandwidth / 1_000_000).toFixed(1)} Mbps<br>
+          <strong>Ping:</strong> ${s.latency.toFixed(0)} ms<br>
+          <strong>Jitter:</strong> ${s.jitter ? s.jitter.toFixed(0) : '—'} ms
+        `;
+        statusEl.innerHTML = '<strong style="color:#00ff9d">✓ Тест завершено!</strong>';
+      };
+    }
+
+    // Автозапуск коли сторінка відкрилася
+    window.onload = startTest;
+  </script>
+</body>
+</html>
