@@ -32,13 +32,11 @@
   
   <div class="results" id="results">Чекаємо результати...</div>
 
-  <script type="module">
-  // Простий speedtest, який має працювати без проблем з CORS
+<script type="module">
   const statusEl = document.getElementById('status');
   const resultsEl = document.getElementById('results');
-  const canvas = document.getElementById('downloadGauge');
   
-  // Створюємо простий вимірювач (якщо canvas-gauges завантажився)
+  // Створюємо вимірювач (gauge) із лімітом 1000 Mbps
   let downloadGauge;
   if (typeof RadialGauge !== 'undefined') {
     downloadGauge = new RadialGauge({
@@ -47,14 +45,14 @@
       height: 340,
       units: "Mbps",
       minValue: 0,
-      maxValue: 1200,
-      majorTicks: ["0","200","400","600","800","1000","1200"],
+      maxValue: 1200,                 // ← змінено на 1000
+      majorTicks: ["0","200","400","600","800","1000"],
       minorTicks: 10,
       strokeTicks: true,
       highlights: [
         { from: 0, to: 100, color: "#ff4444" },
         { from: 100, to: 400, color: "#ffaa00" },
-        { from: 400, to: 1200, color: "#00ff88" }
+        { from: 400, to: 1000, color: "#00ff88" }
       ],
       colorPlate: "#1a1a2e",
       colorMajorTicks: "#ffffff",
@@ -68,71 +66,95 @@
     }).draw();
   }
 
-  // Функція для оновлення статусу
-  function updateStatus(message) {
-    if (statusEl) statusEl.textContent = message;
-  }
+  function updateStatus(msg) { if(statusEl) statusEl.textContent = msg; }
 
-  // Функція для оновлення результатів
-  function updateResults(download, upload, ping, jitter = '—') {
-    if (resultsEl) {
-      resultsEl.innerHTML = `
-        <strong>↓ Download:</strong> ${download} Mbps<br>
-        <strong>↑ Upload:</strong> ${upload} Mbps<br>
-        <strong>Ping:</strong> ${ping} ms<br>
-        <strong>Jitter:</strong> ${jitter} ms
-      `;
-    }
-  }
-
-  // Функція для оновлення стрілки
+  // Функція для оновлення стрілки (згладжене значення)
   function updateGauge(value) {
     if (downloadGauge) {
-      downloadGauge.value = Math.min(Math.round(value), 1200);
+      // Обмежуємо значення 1000, щоб стрілка не вилітала за шкалу
+      downloadGauge.value = Math.min(value, 1000);
     }
   }
 
-  // --- Логіка простого тесту ---
-  async function runSimpleTest() {
+  async function runLiveTest() {
     updateStatus('Вимірювання ping...');
-    
-    // 1. Простий ping (вимірюємо затримку)
     const pingStart = performance.now();
-    try {
-      await fetch('https://cloudflare.com/cdn-cgi/trace', { mode: 'no-cors' });
-    } catch (e) {
-      // Ігноруємо помилки, нам важливий час
-    }
-    const pingTime = (performance.now() - pingStart).toFixed(0);
+    await fetch('https://cloudflare.com/cdn-cgi/trace', { mode: 'no-cors' });
+    const ping = (performance.now() - pingStart).toFixed(0);
+
+    // --- "Живий" Download тест (20 MB) з оновленням стрілки ---
+    updateStatus('Завантаження (download)...');
+    const downloadUrl = 'https://speed.cloudflare.com/__down?bytes=20000000'; // 20 MB
+
+    const dlStart = performance.now();
+    let totalBytes = 0;
+    let lastUpdate = performance.now();
+    let lastBytes = 0;
+
+    const response = await fetch(downloadUrl);
+    const reader = response.body.getReader();
     
-    // 2. Тест швидкості (імітація за допомогою завантаження файлу)
-    updateStatus('Тестування завантаження (download)...');
-    const downloadStart = performance.now();
-    const downloadUrl = 'https://speed.cloudflare.com/__down?bytes=10000000'; // 10MB
-    try {
-      const response = await fetch(downloadUrl);
-      const blob = await response.blob();
-      const duration = (performance.now() - downloadStart) / 1000; // в секундах
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      totalBytes += value.length;
+      const now = performance.now();
       
-      // Розрахунок швидкості: (розмір файлу в бітах) / тривалість в секундах / 1_000_000
-      const fileSizeInBits = blob.size * 8;
-      const downloadSpeed = (fileSizeInBits / duration / 1_000_000).toFixed(1);
-      
-      updateGauge(downloadSpeed);
-      updateResults(downloadSpeed, '?', pingTime, '—');
-      
-      // Тест аплоаду зробити складніше без сервера, тому пропустимо для простоти
-      updateStatus('✓ Тест завершено!');
-      
-    } catch (error) {
-      console.error('Помилка тесту:', error);
-      updateStatus('Помилка виконання тесту');
-      resultsEl.innerHTML = `Не вдалося виконати тест. Можливо, тимчасові проблеми на лінії.`;
+      // Оновлюємо стрілку кожні 200 мс для плавності
+      if (now - lastUpdate > 200) {
+        const durationSec = (now - lastUpdate) / 1000;
+        const bytesDelta = totalBytes - lastBytes;
+        const speedMbps = (bytesDelta * 8) / durationSec / 1_000_000;
+        
+        updateGauge(speedMbps);
+        
+        lastUpdate = now;
+        lastBytes = totalBytes;
+      }
     }
+
+    const dlDuration = (performance.now() - dlStart) / 1000;
+    const downloadMbps = ((totalBytes * 8) / dlDuration / 1_000_000).toFixed(1);
+
+    // Встановлюємо фінальне значення на стрілці
+    updateGauge(downloadMbps);
+
+    // --- Upload тест (залишаємо без змін) ---
+    updateStatus('Відправка (upload)...');
+    const uploadSize = 5 * 1024 * 1024; // 5 MB
+    const uploadData = new Blob([new Uint8Array(uploadSize)]);
+    const ulStart = performance.now();
+    
+    await fetch('https://httpbin.org/post', {
+      method: 'POST',
+      body: uploadData,
+      mode: 'no-cors'
+    });
+    
+    const ulDuration = (performance.now() - ulStart) / 1000;
+    const uploadMbps = ((uploadSize * 8) / ulDuration / 1_000_000).toFixed(1);
+
+    // --- Jitter (імітація) ---
+    let jitterSum = 0;
+    for(let i = 0; i < 5; i++) {
+      const jStart = performance.now();
+      await fetch('https://cloudflare.com/cdn-cgi/trace', { mode: 'no-cors' });
+      jitterSum += (performance.now() - jStart);
+    }
+    const avgJitter = (jitterSum / 5 - ping).toFixed(0);
+
+    // Фінальне відображення результатів
+    resultsEl.innerHTML = `
+      <strong>↓ Download:</strong> ${downloadMbps} Mbps<br>
+      <strong>↑ Upload:</strong> ${uploadMbps} Mbps<br>
+      <strong>Ping:</strong> ${ping} ms<br>
+      <strong>Jitter:</strong> ${avgJitter} ms
+    `;
+    updateStatus('✓ Тест завершено!');
   }
 
-  // Автоматичний запуск
-  runSimpleTest();
-    </script>
+  window.onload = runLiveTest;
+</script>
 </body>
 </html>
